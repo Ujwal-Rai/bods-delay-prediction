@@ -1,0 +1,8 @@
+.env
+data/raw/
+data/processed/
+*.db
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+spark-warehouse/
