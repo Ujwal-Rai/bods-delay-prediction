@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 spark-warehouse/
+data/raw/
+data/processed/
+models/
