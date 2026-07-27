@@ -9,3 +9,4 @@ spark-warehouse/
 data/raw/
 data/processed/
 models/
+data/db/bus_analytics_dump.sql
