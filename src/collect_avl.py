@@ -1,36 +1,16 @@
-#!/usr/bin/env python3
 """
-collect_avl.py
-==============
-Continuous collector for real-time bus location (AVL) data from the UK
-Department for Transport's Bus Open Data Service (BODS).
+collect_avl.py — polls the BODS SIRI-VM feed and saves bus positions.
 
-BODS publishes the *current* position of every bus in Great Britain, refreshed
-every 10 seconds, but it does NOT keep a public historical archive. This script
-polls the SIRI-VM datafeed endpoint on a fixed interval and appends every
-vehicle observation to hourly gzip-compressed CSV files, building the historical
-dataset that the analytics pipeline needs.
+BODS only shows where buses are right now — it doesn't store history.
+So this script hits the feed every 30s and appends to hourly csv.gz files
+to build up the dataset I need.
 
-Design notes for the report
----------------------------
-* Credentials are read from the BODS_API_KEY environment variable (or a local
-  .env file that is git-ignored). No key is ever hard-coded -- this satisfies
-  the "no hard-coded credentials" requirement of the brief.
-* Output is partitioned by hour. Spark can then read data/raw/avl/*.csv.gz as a
-  single DataFrame while retaining natural file-level parallelism.
-* The script is crash-tolerant and resumable: it appends to whatever hour-file
-  is current, so it can be stopped and restarted freely without data loss.
-* Duplicate observations (the feed returns the same RecordedAtTime if a vehicle
-  has not reported since the last poll) are deliberately NOT removed here.
-  De-duplication happens in Spark so that the raw capture stays a faithful
-  record and the data-quality step is visible in the pipeline.
-
-Usage
------
-    python src/collect_avl.py                     # defaults: Greater Manchester, 30s
-    python src/collect_avl.py --once              # single poll, for testing
-    python src/collect_avl.py --interval 60       # gentler polling
-    python src/collect_avl.py --bbox -1.90,53.70,-1.30,53.95 --region west_yorkshire
+Notes:
+- API key comes from a .env file (git-ignored), never hard-coded.
+- Files split by hour so Spark reads them in parallel.
+- Keeps duplicate pings on purpose — I remove them later in Spark so the
+  cleaning step is visible in the pipeline.
+- Can be stopped/restarted safely; it just appends.
 """
 
 from __future__ import annotations
@@ -48,9 +28,7 @@ from pathlib import Path
 import requests
 from lxml import etree
 
-# --------------------------------------------------------------------------
 # Configuration
-# --------------------------------------------------------------------------
 
 BODS_DATAFEED_URL = "https://data.bus-data.dft.gov.uk/api/v1/datafeed"
 
@@ -122,9 +100,7 @@ _SIMPLE_FIELDS = {
 _STOP = False
 
 
-# --------------------------------------------------------------------------
 # Credential handling
-# --------------------------------------------------------------------------
 
 def load_api_key() -> str:
     """Read the BODS API key from the environment or a local .env file."""
@@ -151,9 +127,7 @@ def load_api_key() -> str:
     )
 
 
-# --------------------------------------------------------------------------
 # SIRI-VM parsing
-# --------------------------------------------------------------------------
 
 def _local_name(tag) -> str:
     """Strip any XML namespace from a tag name."""
@@ -164,13 +138,12 @@ def _local_name(tag) -> str:
 
 def parse_siri_vm(xml_bytes: bytes, poll_time: str) -> list[dict]:
     """
-    Turn a SIRI-VM response into a list of flat dictionaries, one per vehicle.
+    Parse a SIRI-VM response into one flat dict per vehicle.
 
-    The SIRI schema nests fields several levels deep and operators differ in how
-    much of the optional structure they populate. Rather than depending on exact
-    XPaths, this walks each <VehicleActivity> subtree and picks up any element
-    whose local name is one we care about. This is markedly more robust across
-    the ~400 operators publishing to BODS.
+    The SIRI feed nests fields quite deep and different operators fill in
+    different amounts of it, so instead of writing fixed XPaths I just walk
+    each <VehicleActivity> and grab any tag I recognise. This ended up being
+    a lot more reliable across all the operators on BODS.
     """
     try:
         root = etree.fromstring(xml_bytes)
@@ -205,9 +178,7 @@ def parse_siri_vm(xml_bytes: bytes, poll_time: str) -> list[dict]:
     return records
 
 
-# --------------------------------------------------------------------------
 # Output
-# --------------------------------------------------------------------------
 
 def hour_file(outdir: Path, region: str) -> Path:
     """Return the path of the gzip CSV for the current UTC hour."""
@@ -226,9 +197,7 @@ def append_rows(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-# --------------------------------------------------------------------------
 # Main polling loop
-# --------------------------------------------------------------------------
 
 def poll_once(session: requests.Session, api_key: str, bbox: str,
               timeout: int = 45) -> bytes | None:
